@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Earth & Orbital Mechanics Simulator</title>
+    <style>
+        body {
+            margin: 0;
+            background-color: #050510;
+            color: #ffffff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+        #canvas-container {
+            position: relative;
+            box-shadow: 0 0 30px rgba(0, 150, 255, 0.2);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            background: radial-gradient(circle at center, #0a0b1e 0%, #020205 100%);
+        }
+        #ui-panel {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            background: rgba(10, 15, 30, 0.85);
+            padding: 15px;
+            border-radius: 6px;
+            border: 1px solid rgba(0, 180, 255, 0.3);
+            font-size: 13px;
+        }
+        .stat { margin-bottom: 5px; }
+        .stat span { color: #00d2ff; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<div id="canvas-container">
+    <canvas id="orbitCanvas" width="900" height="650"></canvas>
+    <div id="ui-panel">
+        <h3>Earth Orbital Telemetry</h3>
+        <div class="stat">Central Body: <span>Earth</span></div>
+        <div class="stat">Satellite: <span>Moon (Scaled)</span></div>
+        <div class="stat">Simulated Time: <span id="time-val">0</span> days</div>
+        <div class="stat">Orbital Speed: <span id="speed-val">1.02</span> km/s</div>
+        <div class="stat">Eccentricity: <span>0.0549</span></div>
+    </div>
+</div>
+
+<script>
+class OrbitSimulator {
+    constructor(canvasId) {
+        this.canvas = document.getElementById(canvasId);
+        this.ctx = this.canvas.getContext('2d');
+        this.width = this.canvas.width;
+        this.height = this.canvas.height;
+        this.centerX = this.width / 2;
+        this.centerY = this.height / 2;
+
+        // Physical parameters (scaled for visualization)
+        this.earthRadius = 35;
+        this.moonRadius = 10;
+        this.semiMajorAxis = 260; // Visual pixels
+        this.eccentricity = 0.25;  // Exaggerated for visual effect
+        this.semiMinorAxis = this.semiMajorAxis * Math.sqrt(1 - Math.pow(this.eccentricity, 2));
+        this.focusOffset = this.semiMajorAxis * this.eccentricity;
+
+        this.angle = 0;
+        this.speedMultiplier = 0.015;
+        this.daysPassed = 0;
+
+        this.trail = [];
+        this.maxTrailPoints = 150;
+
+        this.stars = this.generateStars(200);
+    }
+
+    generateStars(count) {
+        const stars = [];
+        for (let i = 0; i < count; i++) {
+            stars.push({
+                x: Math.random() * this.width,
+                y: Math.random() * this.height,
+                radius: Math.random() * 1.5,
+                alpha: Math.random()
+            });
+        }
+        return stars;
+    }
+
+    drawStars() {
+        this.ctx.fillStyle = "#ffffff";
+        this.stars.forEach(star => {
+            this.ctx.globalAlpha = star.alpha;
+            this.ctx.beginPath();
+            this.ctx.arc(star.x, star.y, star.radius, 0, Math.PI * 2);
+            this.ctx.fill();
+        });
+        this.ctx.globalAlpha = 1.0;
+    }
+
+    drawOrbitPath() {
+        this.ctx.beginPath();
+        this.ctx.ellipse(
+            this.centerX - this.focusOffset,
+            this.centerY,
+            this.semiMajorAxis,
+            this.semiMinorAxis,
+            0, 0, 2 * Math.PI
+        );
+        this.ctx.strokeStyle = 'rgba(0, 150, 255, 0.25)';
+        this.ctx.setLineDash([5, 5]);
+        this.ctx.lineWidth = 1.5;
+        this.ctx.stroke();
+        this.ctx.setLineDash([]);
+    }
+
+    drawEarth() {
+        // Earth Atmosphere Glow
+        const glowGradient = this.ctx.createRadialGradient(
+            this.centerX, this.centerY, this.earthRadius * 0.8,
+            this.centerX, this.centerY, this.earthRadius * 1.6
+        );
+        glowGradient.addColorStop(0, 'rgba(0, 160, 255, 0.8)');
+        glowGradient.addColorStop(0.6, 'rgba(0, 100, 200, 0.3)');
+        glowGradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+
+        this.ctx.beginPath();
+        this.ctx.arc(this.centerX, this.centerY, this.earthRadius * 1.6, 0, Math.PI * 2);
+        this.ctx.fillStyle = glowGradient;
+        this.ctx.fill();
+
+        // Earth Body
+        const earthGradient = this.ctx.createRadialGradient(
+            this.centerX - 10, this.centerY - 10, 5,
+            this.centerX, this.centerY, this.earthRadius
+        );
+        earthGradient.addColorStop(0, '#4b9fe1');
+        earthGradient.addColorStop(0.7, '#145286');
+        earthGradient.addColorStop(1, '#082340');
+
+        this.ctx.beginPath();
+        this.ctx.arc(this.centerX, this.centerY, this.earthRadius, 0, Math.PI * 2);
+        this.ctx.fillStyle = earthGradient;
+        this.ctx.fill();
+    }
+
+    updateAndDrawMoon() {
+        // Kepler's 2nd Law simulation: Variable angular velocity
+        const r = (this.semiMajorAxis * (1 - Math.pow(this.eccentricity, 2))) / 
+                  (1 + this.eccentricity * Math.cos(this.angle));
+        
+        // Dynamic speed based on distance
+        const currentSpeed = this.speedMultiplier * Math.pow(this.semiMajorAxis / r, 2);
+        this.angle += currentSpeed;
+
+        const moonX = (this.centerX - this.focusOffset) + this.semiMajorAxis * Math.cos(this.angle);
+        const moonY = this.centerY + this.semiMinorAxis * Math.sin(this.angle);
+
+        // Store trail
+        this.trail.push({ x: moonX, y: moonY });
+        if (this.trail.length > this.maxTrailPoints) {
+            this.trail.shift();
+        }
+
+        // Draw Trail
+        for (let i = 0; i < this.trail.length - 1; i++) {
+            this.ctx.beginPath();
+            this.ctx.moveTo(this.trail[i].x, this.trail[i].y);
+            this.ctx.lineTo(this.trail[i+1].x, this.trail[i+1].y);
+            this.ctx.strokeStyle = `rgba(200, 200, 220, ${i / this.trail.length * 0.4})`;
+            this.ctx.lineWidth = 2;
+            this.ctx.stroke();
+        }
+
+        // Draw Moon
+        this.ctx.beginPath();
+        this.ctx.arc(moonX, moonY, this.moonRadius, 0, Math.PI * 2);
+        this.ctx.fillStyle = '#d0d5dd';
+        this.ctx.fill();
+
+        // Telemetry Update
+        this.daysPassed += 0.05;
+        document.getElementById('time-val').innerText = this.daysPassed.toFixed(1);
+        document.getElementById('speed-val').innerText = (1.02 * (this.semiMajorAxis / r)).toFixed(2);
+    }
+
+    render() {
+        this.ctx.clearRect(0, 0, this.width, this.height);
+        this.drawStars();
+        this.drawOrbitPath();
+        this.drawEarth();
+        this.updateAndDrawMoon();
+
+        requestAnimationFrame(() => this.render());
+    }
+}
+
+window.onload = () => {
+    const sim = new OrbitSimulator('orbitCanvas');
+    sim.render();
+};
+</script>
+</body>
+</html>
